@@ -1,146 +1,153 @@
-import streamlit as st
-import numpy as np
+"""A teaching calculator for the theoretical MA(1) lag-1 autocorrelation."""
 
-# Set up the page configuration for better aesthetics
-st.set_page_config(
-    page_title="MA(1) Invertibility Calculator",
-    layout="centered",
-    initial_sidebar_state="expanded"
-)
+from dataclasses import dataclass
+import math
+from typing import Optional
 
-def calculate_ma1_theta(rho):
+
+@dataclass(frozen=True)
+class MA1Result:
+    theta: Optional[float]
+    other_theta: Optional[float]
+    status: str
+
+
+def calculate_ma1_theta(rho: float) -> MA1Result:
+    """Solve rho = theta / (1 + theta**2), using the plus-sign convention.
+
+    States are invalid, zero, boundary, and invertible. Boundary roots are
+    repeated and are not strictly invertible. At zero there is one finite root.
     """
-    Calculates the two possible theta coefficients for an MA(1) process
-    given the autocorrelation at lag 1 (rho), and selects the invertible one.
-
-    The relationship is: rho = theta / (1 + theta^2), which is a quadratic:
-    (rho) * theta^2 - (1) * theta + (rho) = 0
-    """
-    # Check for the stationarity/invertibility boundary constraint: |rho| <= 0.5
-    if abs(rho) > 0.5:
-        return None, "Error: The absolute value of the Autocorrelation (rho) for an MA(1) process must be less than or equal to 0.5 to have real solutions for theta."
-
-    # Coefficients for the quadratic equation A*theta^2 + B*theta + C = 0
-    A = rho
-    B = -1.0
-    C = rho
-
-    # Discriminant: B^2 - 4AC
-    discriminant = B**2 - 4 * A * C
-
-    # Since we already checked abs(rho) <= 0.5, the discriminant should be non-negative.
-    # However, we handle the edge case near 0 just in case.
-    if discriminant < 0:
-        return None, "Error: Mathematical error (discriminant < 0), check input data."
-
-    # Handle the boundary case where rho = 0.5 or rho = -0.5
+    if not math.isfinite(rho) or abs(rho) > 0.5:
+        return MA1Result(None, None, "invalid")
+    if rho == 0:
+        return MA1Result(0.0, None, "zero")
     if abs(rho) == 0.5:
-        # If rho = 0.5, theta = 1. If rho = -0.5, theta = -1.
-        # This is the non-invertible boundary case, but it's the only real root.
-        theta_1 = -B / (2 * A) # Should be 1 or -1
-        return theta_1, f"Boundary Case: $|\rho| = 0.5$, which means $|\theta| = 1$. The process is on the boundary of invertibility."
+        return MA1Result(math.copysign(1.0, rho), None, "boundary")
 
-    # Quadratic formula: (-B +/- sqrt(discriminant)) / (2A)
-    # Note: A=rho is guaranteed to be non-zero here because we handled rho=0 separately below.
-    sqrt_discriminant = np.sqrt(discriminant)
-    theta_1 = (1 + sqrt_discriminant) / (2 * rho)
-    theta_2 = (1 - sqrt_discriminant) / (2 * rho)
-
-    # Invertibility condition: we must choose the root where |theta| < 1
-    if abs(theta_1) < 1:
-        return theta_1, "Success"
-    elif abs(theta_2) < 1:
-        return theta_2, "Success"
-    else:
-        # This case should ideally not happen if |rho| < 0.5
-        return None, "Error: Neither root satisfied the invertibility condition ( $|\theta| < 1$ )."
+    # Rationalizing the small root avoids cancellation close to rho = 0.
+    discriminant = (1.0 - 2.0 * rho) * (1.0 + 2.0 * rho)
+    theta = (2.0 * rho) / (1.0 + math.sqrt(discriminant))
+    other_theta = 1.0 / theta
+    return MA1Result(theta, other_theta, "invertible")
 
 
-# --- Streamlit UI Components ---
+def format_coefficient(value: float) -> str:
+    """Keep small nonzero values and near-boundary values distinguishable."""
+    return format(value, ".17g")
 
-st.title("MA(1) Invertibility Coefficient $\\theta$ Calculator")
-st.markdown("""
-This app calculates the $\\theta$ coefficient for an **Invertible Moving Average process of order 1 (MA(1))**
-based on its first-order autocorrelation, $\\rho$.
 
-The relationship is given by:
-$$\\rho = \\frac{\\theta}{1 + \\theta^2}$$
+def main() -> None:
+    import streamlit as st
 
-We solve the resulting quadratic equation $\\rho \\theta^2 - \\theta + \\rho = 0$ for $\\theta$, selecting the root
-that satisfies the invertibility condition: $|\theta| < 1$.
-""")
-
-# Input field for ACF(1) value
-rho_input = st.number_input(
-    label="Enter the Autocorrelation at Lag 1 ($\\rho$):",
-    min_value=-0.5,
-    max_value=0.5,
-    value=0.3,
-    step=0.01,
-    format="%.4f",
-    help="The value of |rho| must be less than or equal to 0.5 for an MA(1) process."
-)
-
-st.markdown("---")
-
-# Calculation and Display
-if rho_input != 0:
-    # Perform the calculation
-    theta_result, status_message = calculate_ma1_theta(rho_input)
-
-    if theta_result is not None:
-        # Calculate the other, non-invertible root (which is 1/theta) for context
-        # Handle the case where theta_result is 0 (which happens if rho is 0, but we checked rho!=0)
-        # and the boundary cases (theta=1 or -1)
-        if abs(theta_result) == 1:
-            # Boundary case |rho|=0.5
-            theta_other = theta_result
-        else:
-            theta_other = 1 / theta_result
-
-        # Display results
-        st.subheader("Calculation Results")
-
-        st.metric(
-            label="Invertible MA(1) Coefficient ($\\theta$)",
-            value=f"{theta_result:.6f}",
-            # Reverted to single backslash for help text
-            help="This root satisfies the invertibility condition $|\\theta| < 1$."
-        )
-
-        # Reverted to single backslash within the f-string for better markdown parsing
-        st.info(
-            f"""
-            The two roots of the quadratic equation are:
-            * **Invertible Root ($\\theta$):** `{theta_result:.6f}` (where $|\\theta| \\le 1$)
-            * **Non-invertible Root ($1/\\theta$):** `{theta_other:.6f}` (where $|1/\\theta| \\ge 1$)
-            """
-        )
-
-        if "Boundary Case" in status_message:
-             st.warning(status_message)
-
-    else:
-        # Display error message
-        st.error(status_message)
-
-else:
-    # Handle the trivial case where rho = 0
-    st.info("If the Autocorrelation at Lag 1 ($\\rho$) is 0, the MA(1) coefficient ($\theta$) is also 0.")
-    st.metric(
-        label="Invertible MA(1) Coefficient ($\\theta$)",
-        value="0.0"
+    st.set_page_config(page_title="MA(1) Invertibility Calculator", layout="centered")
+    st.title("MA(1) Invertibility Calculator")
+    st.markdown(
+        r"""
+Find the MA(1) coefficient **θ** from a **theoretical lag-1 autocorrelation ρ₁**.
+We use the **plus-sign convention**:
+"""
+    )
+    st.latex(r"X_t = \mu + \varepsilon_t + \theta\varepsilon_{t-1}")
+    st.markdown(
+        r"""
+Here, $\varepsilon_t$ is white noise with mean zero and finite, positive variance
+$\sigma^2$. Under this convention:
+"""
+    )
+    st.latex(r"\rho_1 = \frac{\theta}{1+\theta^2}, \qquad \rho_k=0\quad(k\geq2)")
+    st.caption(
+        "If your course uses a minus sign before θ, the lag-1 formula changes sign. "
+        "A compatible lag-1 value alone does not establish that a process is MA(1)."
     )
 
-st.markdown("---")
-st.markdown("#### About Invertibility")
-st.markdown(
-    """
-    For an MA(1) process to be **invertible**, meaning it can be represented as an
-    infinite order autoregressive (AR($\infty$)) process, the coefficient $\\theta$ must satisfy
-    $|\\theta| < 1$.
+    rho = st.number_input(
+        "Theoretical lag-1 autocorrelation, ρ₁",
+        min_value=-0.5,
+        max_value=0.5,
+        value=0.3,
+        step=0.01,
+        format="%.10f",
+        help=(
+            "Theoretical MA(1) values lie between −0.5 and 0.5. "
+            "Strict invertibility requires values strictly inside that interval. "
+            "You can type a value directly."
+        ),
+    )
+    st.caption(
+        "This is a theoretical calculation, not a fitted model. A sample "
+        "autocorrelation can lie outside this range because of sampling variation."
+    )
+    st.markdown("---")
+    st.subheader("Calculation results")
+    result = calculate_ma1_theta(rho)
 
-    If you select the root $|\\theta| > 1$, the resulting MA(1) process is *not* invertible.
-    However, it has the *exact same* autocorrelation function as the invertible process with the coefficient $1/\\theta$.
-    """
-)
+    if result.status == "invalid":
+        st.error("Enter a finite theoretical autocorrelation between −0.5 and 0.5.")
+    elif result.status == "boundary":
+        st.metric("Repeated MA(1) root, θ", format_coefficient(result.theta))
+        st.warning(
+            r"No strictly invertible solution: $|\rho_1|=0.5$ gives "
+            r"$|\theta|=1$. This is the non-invertible boundary."
+        )
+        st.write("The quadratic has one repeated root, rather than two distinct roots.")
+    elif result.status == "zero":
+        st.metric("Invertible MA(1) coefficient, θ", "0")
+        st.info(
+            r"When $\rho_1=0$, the equation reduces to $-\theta=0$. "
+            r"The only finite solution is $\theta=0$: white noise around the mean. "
+            r"There is no second finite root."
+        )
+    else:
+        st.metric("Invertible MA(1) coefficient, θ", format_coefficient(result.theta))
+        st.markdown(r"This root satisfies the strict condition $|\theta|<1$.")
+        if math.isfinite(result.other_theta):
+            st.write(
+                "Other root (non-invertible): θ = "
+                + format_coefficient(result.other_theta)
+            )
+        else:
+            st.info("The other root is too large in magnitude to display numerically.")
+        st.markdown(
+            r"The other root is $1/\theta$, with magnitude greater than 1. "
+            r"Both roots give the same theoretical autocorrelation function."
+        )
+        reconstructed = result.theta / (1.0 + result.theta**2)
+        st.caption("Check: θ / (1 + θ²) = " + format_coefficient(reconstructed))
+
+    with st.expander("How the calculation works"):
+        st.latex(r"\rho_1\theta^2-\theta+\rho_1=0")
+        st.markdown(
+            r"For $0<|\rho_1|<0.5$, there are two distinct reciprocal roots. "
+            r"The invertible root can be written as:"
+        )
+        st.latex(r"\theta=\frac{2\rho_1}{1+\sqrt{1-4\rho_1^2}}")
+        st.write(
+            "This form avoids subtracting nearly equal numbers when the "
+            "autocorrelation is close to zero. It also gives θ = 0 at ρ₁ = 0."
+        )
+
+    st.markdown("---")
+    st.subheader("About invertibility and stationarity")
+    st.markdown(
+        r"""
+**Invertibility** means that the innovations can be recovered from current and
+past observations through a convergent filter with absolutely summable coefficients:
+"""
+    )
+    st.latex(r"\varepsilon_t=\sum_{j=0}^{\infty}(-\theta)^j(X_{t-j}-\mu),\qquad |\theta|<1")
+    st.markdown(
+        r"""
+**Stationarity is different.** With finite-variance white noise, an MA(1) process
+is weakly stationary for every finite $\theta$, including non-invertible values.
+
+**Why choose the invertible root?** Nonzero reciprocal coefficients give the same
+ACF; invertibility selects a unique representation when $|\rho_1|<0.5$.
+Matching autocovariances also requires changing the innovation variance: replacing
+$\theta$ by $1/\theta$ requires replacing $\sigma^2$ by $\theta^2\sigma^2$.
+"""
+    )
+
+
+if __name__ == "__main__":
+    main()
